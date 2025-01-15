@@ -1,31 +1,80 @@
+require('dotenv').config();
+
 const express = require('express');
-const mysql = require('mysql2');
+const { Client } = require('pg');  // Use pg library for PostgreSQL
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
-// Create an Express app
 const app = express();
 const port = 5000;
 
-// Middleware to parse JSON request bodies
 app.use(express.json());
 
-// Create a connection to the MySQL database
-const connection = mysql.createConnection({
-  host: 'localhost',
-  user: 'root',
-  password: '12345',
-  database: 'STUDENT_PORTAL'
+// PostgreSQL connection string from Render's external database URL
+const client = new Client({
+  connectionString: process.env.DB_CONNECTION_STRING,
+  ssl: {
+    rejectUnauthorized: false,  // Render requires SSL
+  },
 });
 
-// Connect to the database
-connection.connect((err) => {
+// Connect to the PostgreSQL database
+client.connect((err) => {
   if (err) {
     console.error('Error connecting to the database:', err.stack);
     return;
   }
-  console.log('Connected to the database as ID ' + connection.threadId);
+  console.log('Connected to the PostgreSQL database');
 });
+
+
+
+app.get('/check-users-table', (req, res) => {
+    const checkTableQuery = `
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' AND table_name = 'users'
+      );
+    `;
+  
+    client.query(checkTableQuery, (err, result) => {
+      if (err) {
+        console.error('Query error:', err.stack);
+        return res.status(500).json({ error: 'Database error' });
+      }
+  
+      if (result.rows[0].exists) {
+        return res.status(200).json({ message: 'Table "users" exists.' });
+      } else {
+        // Create the table if it doesn't exist
+        const createTableQuery = `
+          CREATE TABLE users (
+            id SERIAL PRIMARY KEY,
+            firstName VARCHAR(100),
+            lastName VARCHAR(100),
+            email VARCHAR(100) UNIQUE,
+            password VARCHAR(255),
+            phoneNumber VARCHAR(15),
+            dateOfBirth DATE,
+            gender VARCHAR(10),
+            className VARCHAR(50),
+            schoolName VARCHAR(100),
+            description TEXT,
+            exams JSONB
+          );
+        `;
+  
+        client.query(createTableQuery, (err, result) => {
+          if (err) {
+            console.error('Error creating table:', err.stack);
+            return res.status(500).json({ error: 'Table creation failed' });
+          }
+          return res.status(201).json({ message: 'Table "users" created successfully.' });
+        });
+      }
+    });
+  });
+  
 
 // Signup API
 app.post('/signup', (req, res) => {
@@ -39,13 +88,14 @@ app.post('/signup', (req, res) => {
   if (phoneNumber.length < 10) {
     return res.status(400).json({ error: 'Phone number must be at least 10 characters long' });
   }
+
   // Check if the email already exists
-  connection.query('SELECT * FROM users WHERE email = ?', [email], (err, results) => {
+  client.query('SELECT * FROM users WHERE email = $1', [email], (err, results) => {
     if (err) {
       console.error('Query error:', err.stack);
       return res.status(500).json({ error: 'Database error' });
     }
-    if (results.length > 0) {
+    if (results.rows.length > 0) {
       return res.status(400).json({ error: 'Email already in use' });
     }
 
@@ -57,8 +107,8 @@ app.post('/signup', (req, res) => {
       }
 
       // Insert the user into the database
-      const query = 'INSERT INTO users (firstName, lastName, email, password, phoneNumber, dateOfBirth, gender, className, schoolName, description, exams) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
-      connection.query(query, [firstName, lastName, email, hashedPassword, phoneNumber, dateOfBirth, gender, className, schoolName, description, JSON.stringify(exams)], (err, results) => {
+      const query = 'INSERT INTO users (firstName, lastName, email, password, phoneNumber, dateOfBirth, gender, className, schoolName, description, exams) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)';
+      client.query(query, [firstName, lastName, email, hashedPassword, phoneNumber, dateOfBirth, gender, className, schoolName, description, JSON.stringify(exams)], (err, results) => {
         if (err) {
           console.error('Query error:', err.stack);
           return res.status(500).json({ error: 'Database error' });
@@ -74,16 +124,16 @@ app.post('/login', (req, res) => {
   const { email, password } = req.body;
 
   // Find the user by email
-  connection.query('SELECT * FROM users WHERE email = ?', [email], (err, results) => {
+  client.query('SELECT * FROM users WHERE email = $1', [email], (err, results) => {
     if (err) {
       console.error('Query error:', err.stack);
       return res.status(500).json({ error: 'Database error' });
     }
-    if (results.length === 0) {
+    if (results.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const user = results[0];
+    const user = results.rows[0];
 
     // Compare the password with the hashed password in the database
     bcrypt.compare(password, user.password, (err, isMatch) => {
