@@ -4,10 +4,16 @@ const express = require('express');
 const { Client } = require('pg');  // Use pg library for PostgreSQL
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-
+const cors = require("cors");
 const app = express();
 const port = 5000;
-
+app.use(cors(
+  {
+    origin: '*', // Your frontend URL
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    credentials: true
+  }
+));
 app.use(express.json());
 
 // PostgreSQL connection string from Render's external database URL
