@@ -120,37 +120,66 @@ app.post('/signup', (req, res) => {
 });
 
 // Login API
+// Login API with refresh token
 app.post('/login', (req, res) => {
-  const { email, password } = req.body;
-
-  // Find the user by email
-  client.query('SELECT * FROM users WHERE email = $1', [email], (err, results) => {
-    if (err) {
-      console.error('Query error:', err.stack);
-      return res.status(500).json({ error: 'Database error' });
-    }
-    if (results.rows.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const user = results.rows[0];
-
-    // Compare the password with the hashed password in the database
-    bcrypt.compare(password, user.password, (err, isMatch) => {
+    const { email, password } = req.body;
+  
+    // Find the user by email
+    client.query('SELECT * FROM users WHERE email = $1', [email], (err, results) => {
       if (err) {
-        console.error('Error comparing passwords:', err.stack);
-        return res.status(500).json({ error: 'Password comparison error' });
+        console.error('Query error:', err.stack);
+        return res.status(500).json({ error: 'Database error' });
       }
-      if (!isMatch) {
-        return res.status(400).json({ error: 'Invalid password' });
+      if (results.rows.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
       }
-
-      // Generate a JWT token
-      const token = jwt.sign({ userId: user.id }, 'your_jwt_secret', { expiresIn: '1h' });
-      return res.status(200).json({ message: 'Login successful', token });
+  
+      const user = results.rows[0];
+  
+      // Compare the password with the hashed password in the database
+      bcrypt.compare(password, user.password, (err, isMatch) => {
+        if (err) {
+          console.error('Error comparing passwords:', err.stack);
+          return res.status(500).json({ error: 'Password comparison error' });
+        }
+        if (!isMatch) {
+          return res.status(400).json({ error: 'Invalid password' });
+        }
+  
+        // Generate the access token (expires in 1 hour)
+        const accessToken = jwt.sign({ userId: user.id }, 'your_jwt_secret', { expiresIn: '7d' });
+  
+        // Generate the refresh token (expires in 7 days)
+        const refreshToken = jwt.sign({ userId: user.id }, 'your_refresh_secret', { expiresIn: '1440h' });
+  
+        return res.status(200).json({ message: 'Login successful', accessToken, refreshToken });
+      });
     });
   });
-});
+  
+
+// API to exchange the refresh token for a new access token
+app.post('/refresh-token', (req, res) => {
+    const { refreshToken } = req.body;
+  
+    if (!refreshToken) {
+      return res.status(400).json({ error: 'Refresh token is required' });
+    }
+  
+    // Verify the refresh token
+    jwt.verify(refreshToken, 'your_refresh_secret', (err, decoded) => {
+      if (err) {
+        console.error('Refresh token verification error:', err.stack);
+        return res.status(401).json({ error: 'Invalid or expired refresh token' });
+      }
+  
+      // Generate a new access token
+      const newAccessToken = jwt.sign({ userId: decoded.userId }, 'your_jwt_secret', { expiresIn: '7d' });
+  
+      return res.status(200).json({ message: 'Access token refreshed successfully', accessToken: newAccessToken });
+    });
+  });
+  
 
 // Start the server
 app.listen(port, () => {
